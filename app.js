@@ -195,6 +195,12 @@ const createApp = () => {
     });
   });
 
+  // ✅ Internal route for scheduler
+  app.post('/internal/ping', (req, res) => {
+    console.log("✅ Self-message received:", req.body);
+    res.send("OK");
+  });
+
   return app;
 };
 

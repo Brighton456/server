@@ -15,7 +15,16 @@ const REQUIRED_ENV_VARS = [
 const createApp = () => {
   const app = express();
 
-  app.use(cors());
+  // Configure CORS to allow your Netlify frontend
+  app.use(cors({
+    origin: [
+      'http://localhost:3000',  // Local development
+      'http://localhost:8081',  // Expo local
+      'https://gig-smart.netlify.app'  // Your production frontend
+    ],
+    credentials: true
+  }));
+  
   app.use(express.json());
   app.use(express.static('public'));
 
@@ -121,7 +130,7 @@ const createApp = () => {
 
         if (paymentData) {
           await supabase
-            .from('user_profiles')
+            .from('users')
             .update({
               is_activated: true,
               activation_date: new Date().toISOString()

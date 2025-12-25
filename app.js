@@ -71,11 +71,14 @@ const createApp = () => {
 
       const data = response.data;
 
-      if (data.external_reference) {
-        transactionStatuses.set(data.external_reference, {
-          status: data.status || 'QUEUED',
-          details: 'STK Push initiated, waiting for user confirmation.',
-          checkoutRequestID: data.CheckoutRequestID
+      const statusKey = data?.external_reference || reference;
+
+      if (statusKey) {
+        transactionStatuses.set(statusKey, {
+          status: (data.status || 'QUEUED').toUpperCase(),
+          details: data.message || 'STK Push initiated, waiting for user confirmation.',
+          checkoutRequestID: data.CheckoutRequestID || null,
+          lastUpdated: new Date().toISOString()
         });
       }
 
@@ -83,7 +86,7 @@ const createApp = () => {
         status: data.status || 'QUEUED',
         message: data.message || 'STK Push initiated.',
         checkoutRequestID: data.CheckoutRequestID || null,
-        external_reference: reference,
+        external_reference: statusKey,
         raw: data
       });
     } catch (error) {
@@ -100,21 +103,28 @@ const createApp = () => {
     const data = req.body;
 
     try {
-      const status = data?.response?.Status || data?.status;
-      const externalRef = data?.response?.ExternalReference || data?.external_reference;
+      const statusRaw = data?.response?.Status || data?.status;
+      const status = statusRaw ? statusRaw.toUpperCase() : null;
+      const externalRef = data?.response?.ExternalReference
+        || data?.external_reference
+        || data?.response?.external_reference
+        || data?.reference;
 
       if (externalRef) {
         transactionStatuses.set(externalRef, {
           status,
           result_code: data?.response?.ResultCode,
           result_desc: data?.response?.ResultDesc,
-          full_callback: data
+          full_callback: data,
+          lastUpdated: new Date().toISOString()
         });
       }
 
-      await supabase
-        .from('payment_callbacks')
-        .insert([{ external_reference: externalRef, callback_data: data, status }]);
+      if (externalRef) {
+        await supabase
+          .from('payment_callbacks')
+          .insert([{ external_reference: externalRef, callback_data: data, status }]);
+      }
 
       if (status && status.toLowerCase() === 'success') {
         const { data: paymentData } = await supabase
@@ -170,14 +180,60 @@ const createApp = () => {
     res.sendStatus(200);
   });
 
-  app.get('/api/status/:externalRef', (req, res) => {
+  app.get('/api/status/:externalRef', async (req, res) => {
     const externalRef = req.params.externalRef;
     const statusInfo = transactionStatuses.get(externalRef);
 
     if (statusInfo) {
-      res.json({ status: 'Success', payment_status: statusInfo });
-    } else {
-      res.status(404).json({ status: 'Failure', message: 'No record found for this reference' });
+      return res.json({ 
+        status: 'Success', 
+        payment_status: statusInfo,
+        timestamp: new Date().toISOString()
+      });
+    }
+
+    try {
+      const { data: callbackRows, error: callbackError } = await supabase
+        .from('payment_callbacks')
+        .select('status, callback_data, created_at')
+        .eq('external_reference', externalRef)
+        .order('created_at', { ascending: false })
+        .limit(1);
+
+      if (callbackError) {
+        throw callbackError;
+      }
+
+      if (callbackRows && callbackRows.length > 0) {
+        const latest = callbackRows[0];
+        const normalizedStatus = (latest.status || 'PENDING').toUpperCase();
+        const payload = {
+          status: normalizedStatus,
+          full_callback: latest.callback_data,
+          lastUpdated: latest.created_at
+        };
+
+        transactionStatuses.set(externalRef, payload);
+
+        return res.json({
+          status: 'Success',
+          payment_status: payload,
+          timestamp: new Date().toISOString()
+        });
+      }
+
+      return res.status(202).json({
+        status: 'Pending',
+        message: 'Payment status not yet available',
+        timestamp: new Date().toISOString()
+      });
+    } catch (error) {
+      console.error('Status lookup error:', error.message);
+      return res.status(500).json({
+        status: 'Failure',
+        message: 'Unable to retrieve payment status',
+        timestamp: new Date().toISOString()
+      });
     }
   });
 

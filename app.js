@@ -135,11 +135,21 @@ const createApp = () => {
 
       if (externalRef) {
         // Store callback data first
-        await supabase
-          .from('payment_callbacks')
-          .insert([{ external_reference: externalRef, callback_data: data, status }]);
-        
-        console.log('💾 Callback stored in payment_callbacks table');
+        try {
+          const { error: insertError } = await supabase
+            .from('payment_callbacks')
+            .insert([{ external_reference: externalRef, callback_data: data, status }]);
+          
+          if (insertError) {
+            console.error('❌ Failed to store callback in payment_callbacks:', insertError);
+            console.error('❌ Insert error details:', JSON.stringify(insertError, null, 2));
+          } else {
+            console.log('💾 Callback stored in payment_callbacks table');
+          }
+        } catch (dbError) {
+          console.error('❌ Database error during callback insert:', dbError);
+          console.error('❌ DB error stack:', dbError.stack);
+        }
 
         // Only process transactions on VERIFIED SUCCESS
         if (status && status.toLowerCase() === 'success') {

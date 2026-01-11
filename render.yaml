@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: earning-system-server
+    env: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: PORT
+        value: 10000
+      - key: NODE_ENV
+        value: production
+    autoDeploy: true
+    healthCheckPath: /health
+    healthCheckTimeout: 30

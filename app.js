@@ -12,7 +12,7 @@ const REQUIRED_ENV_VARS = [
   'SUPABASE_SERVICE_KEY',
 ];
 
-const createApp = () => {
+  const createApp = () => {
   const app = express();
 
   // Configure CORS to allow your Netlify frontend
@@ -42,6 +42,59 @@ const createApp = () => {
     process.env.SUPABASE_URL,
     process.env.SUPABASE_SERVICE_KEY
   );
+
+  // Helper function to create transaction directly
+  async function createDirectTransaction(externalRef, callbackData) {
+    try {
+      console.log('🔄 Creating direct transaction for:', externalRef);
+      
+      // Extract amount from callback data
+      const amount = callbackData?.response?.Amount || 5;
+      const phone = callbackData?.response?.Phone || '';
+      
+      // Find user by phone (or use a default user for testing)
+      const { data: userData, error: userError } = await supabase
+        .from('users')
+        .select('id')
+        .eq('phone', phone)
+        .single();
+      
+      if (userError || !userData) {
+        console.error('❌ Could not find user for phone:', phone);
+        console.error('❌ User error:', userError);
+        return;
+      }
+      
+      console.log('👤 Found user:', userData.id, 'creating transaction for amount:', amount);
+      
+      const { error: txError } = await supabase
+        .from('transactions')
+        .insert([
+          {
+            user_id: userData.id,
+            type: 'deposit',
+            amount: amount,
+            fee: 0,
+            net_amount: amount,
+            status: 'completed',
+            description: `M-Pesa deposit (${externalRef})`,
+            external_reference: externalRef,
+            payment_method: 'm-pesa',
+            processed_at: new Date().toISOString()
+          }
+        ]);
+
+      if (txError) {
+        console.error('❌ Failed to create direct transaction:', txError);
+        console.error('❌ Direct transaction error details:', JSON.stringify(txError, null, 2));
+      } else {
+        console.log('💳 Direct transaction created successfully');
+      }
+    } catch (error) {
+      console.error('❌ Error in createDirectTransaction:', error);
+      console.error('❌ Direct transaction error stack:', error.stack);
+    }
+  }
 
   const transactionStatuses = new Map();
 
@@ -194,53 +247,76 @@ const createApp = () => {
         if (status && status.toLowerCase() === 'success') {
           console.log('✅ Processing successful payment for:', externalRef);
           
-          const { data: paymentData } = await supabase
-            .from('activation_payments')
-            .update({
-              status: 'SUCCESS',
-              confirmed_at: new Date().toISOString(),
-              payhero_response: data
-            })
-            .eq('external_reference', externalRef)
-            .select('user_id, amount')
-            .single();
-
-          if (paymentData) {
-            console.log('👤 Updating user activation and creating transaction for user:', paymentData.user_id);
-            
-            // Update user activation
-            await supabase
-              .from('users')
+          try {
+            console.log('🔍 Looking for activation_payments record...');
+            const { data: paymentData, error: paymentError } = await supabase
+              .from('activation_payments')
               .update({
-                is_activated: true,
-                activation_date: new Date().toISOString()
+                status: 'SUCCESS',
+                confirmed_at: new Date().toISOString(),
+                payhero_response: data
               })
-              .eq('id', paymentData.user_id);
+              .eq('external_reference', externalRef)
+              .select('user_id, amount')
+              .single();
 
-            // Distribute referral commissions
-            await supabase.rpc('distribute_referral_commissions', {
-              new_user_id: paymentData.user_id
-            });
+            console.log('📊 Activation payments result:', { paymentData, paymentError });
 
-            // Create transaction record (ONLY PLACE) - Match actual table schema
-            await supabase
-              .from('transactions')
-              .insert([
-                {
-                  user_id: paymentData.user_id,
-                  type: 'deposit',
-                  amount: paymentData.amount || 500,
-                  fee: 0,
-                  net_amount: paymentData.amount || 500,
-                  status: 'completed',
-                  description: 'Account activation fee',
-                  external_reference: externalRef,
-                  payment_method: 'm-pesa',
-                  processed_at: new Date().toISOString()
-                }
-              ]);
+            if (paymentError) {
+              console.error('❌ Failed to update activation_payments:', paymentError);
+              console.error('❌ Activation payments error details:', JSON.stringify(paymentError, null, 2));
+              
+              // Try to create transaction directly without activation_payments
+              console.log('🔄 Creating transaction directly without activation_payments...');
+              await createDirectTransaction(externalRef, data);
+              
+            } else if (paymentData) {
+              console.log('👤 Updating user activation and creating transaction for user:', paymentData.user_id);
+              
+              // Update user activation
+              await supabase
+                .from('users')
+                .update({
+                  is_activated: true,
+                  activation_date: new Date().toISOString()
+                })
+                .eq('id', paymentData.user_id);
 
-            console.log('💳 Transaction created for activation payment');
+              // Distribute referral commissions
+              await supabase.rpc('distribute_referral_commissions', {
+                new_user_id: paymentData.user_id
+              });
+
+              // Create transaction record (ONLY PLACE) - Match actual table schema
+              const { error: txError } = await supabase
+                .from('transactions')
+                .insert([
+                  {
+                    user_id: paymentData.user_id,
+                    type: 'deposit',
+                    amount: paymentData.amount || 500,
+                    fee: 0,
+                    net_amount: paymentData.amount || 500,
+                    status: 'completed',
+                    description: 'Account activation fee',
+                    external_reference: externalRef,
+                    payment_method: 'm-pesa',
+                    processed_at: new Date().toISOString()
+                  }
+                ]);
+
+              if (txError) {
+                console.error('❌ Failed to create transaction:', txError);
+                console.error('❌ Transaction error details:', JSON.stringify(txError, null, 2));
+              } else {
+                console.log('💳 Transaction created for activation payment');
+              }
+            } else {
+              console.log('❌ No activation_payments record found for:', externalRef);
+            }
+          } catch (processError) {
+            console.error('❌ Error processing successful payment:', processError);
+            console.error('❌ Process error stack:', processError.stack);
           }
         } else if (status && status.toLowerCase() === 'failed') {
           console.log('❌ Payment failed for:', externalRef);

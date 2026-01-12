@@ -145,14 +145,42 @@ const createApp = () => {
           
           const { data: insertData, error: insertError } = await supabase
             .from('payment_callbacks')
-            .insert([{ external_reference: externalRef, callback_data: data, status }])
+            .insert([{ 
+              external_reference: externalRef, 
+              callback_data: data, 
+              status 
+            }])
             .select();
           
           console.log('📊 Insert result:', { insertData, insertError });
           
           if (insertError) {
             console.error('❌ Failed to store callback in payment_callbacks:', insertError);
-            console.error('❌ Insert error details:', JSON.stringify(insertError, null, 2));
+            console.error('❌ Error code:', insertError.code);
+            console.error('❌ Error details:', insertError.details);
+            console.error('❌ Error hint:', insertError.hint);
+            console.error('❌ Error message:', insertError.message);
+            console.error('❌ Full error object:', JSON.stringify(insertError, null, 2));
+            
+            // Try alternative insert without select to see if that's the issue
+            console.log('🔄 Trying alternative insert without .select()...');
+            try {
+              const { error: altError } = await supabase
+                .from('payment_callbacks')
+                .insert([{ 
+                  external_reference: externalRef, 
+                  callback_data: data, 
+                  status 
+                }]);
+              
+              if (altError) {
+                console.error('❌ Alternative insert also failed:', altError);
+              } else {
+                console.log('✅ Alternative insert succeeded');
+              }
+            } catch (altCatchError) {
+              console.error('❌ Alternative insert exception:', altCatchError);
+            }
           } else {
             console.log('💾 Callback stored in payment_callbacks table');
             console.log('✅ Inserted record ID:', insertData?.[0]?.id);

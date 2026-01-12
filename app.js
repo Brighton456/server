@@ -44,25 +44,36 @@ const REQUIRED_ENV_VARS = [
   );
 
   // Helper function to create transaction directly
-  async function createDirectTransaction(externalRef, callbackData) {
+  async function createDirectTransaction(externalRef, callbackData, userId = null) {
     try {
       console.log('🔄 Creating direct transaction for:', externalRef);
       
       // Extract amount from callback data
       const amount = callbackData?.response?.Amount || 5;
-      const phone = callbackData?.response?.Phone || '';
       
-      // Find user by phone (or use a default user for testing)
-      const { data: userData, error: userError } = await supabase
-        .from('users')
-        .select('id')
-        .eq('phone', phone)
-        .single();
+      let userData;
       
-      if (userError || !userData) {
-        console.error('❌ Could not find user for phone:', phone);
-        console.error('❌ User error:', userError);
-        return;
+      if (userId) {
+        console.log('👤 Using provided user_id:', userId);
+        userData = { id: userId };
+      } else {
+        // Find user by phone (or use a default user for testing)
+        const phone = callbackData?.response?.Phone || '';
+        console.log('📱 Looking up user by phone:', phone);
+        
+        const { data: userLookup, error: userError } = await supabase
+          .from('users')
+          .select('id')
+          .eq('phone', phone)
+          .single();
+        
+        if (userError || !userLookup) {
+          console.error('❌ Could not find user for phone:', phone);
+          console.error('❌ User error:', userError);
+          return;
+        }
+        
+        userData = userLookup;
       }
       
       console.log('👤 Found user:', userData.id, 'creating transaction for amount:', amount);
@@ -268,7 +279,7 @@ const REQUIRED_ENV_VARS = [
               
               // Try to create transaction directly without activation_payments
               console.log('🔄 Creating transaction directly without activation_payments...');
-              await createDirectTransaction(externalRef, data);
+              await createDirectTransaction(externalRef, data, paymentData?.user_id);
               
             } else if (paymentData) {
               console.log('👤 Updating user activation and creating transaction for user:', paymentData.user_id);

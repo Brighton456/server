@@ -136,15 +136,26 @@ const createApp = () => {
       if (externalRef) {
         // Store callback data first
         try {
-          const { error: insertError } = await supabase
+          console.log('🔍 Attempting to insert into payment_callbacks...');
+          console.log('📝 Insert data:', {
+            external_reference: externalRef,
+            status: status,
+            callback_data_length: JSON.stringify(data).length
+          });
+          
+          const { data: insertData, error: insertError } = await supabase
             .from('payment_callbacks')
-            .insert([{ external_reference: externalRef, callback_data: data, status }]);
+            .insert([{ external_reference: externalRef, callback_data: data, status }])
+            .select();
+          
+          console.log('📊 Insert result:', { insertData, insertError });
           
           if (insertError) {
             console.error('❌ Failed to store callback in payment_callbacks:', insertError);
             console.error('❌ Insert error details:', JSON.stringify(insertError, null, 2));
           } else {
             console.log('💾 Callback stored in payment_callbacks table');
+            console.log('✅ Inserted record ID:', insertData?.[0]?.id);
           }
         } catch (dbError) {
           console.error('❌ Database error during callback insert:', dbError);

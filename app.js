@@ -255,8 +255,9 @@ const REQUIRED_ENV_VARS = [
           console.error('❌ DB error stack:', dbError.stack);
         }
 
-        // Only process transactions on VERIFIED SUCCESS
-        if (status && status.toLowerCase() === 'success') {
+        try {
+          // Only process transactions on VERIFIED SUCCESS
+          if (status && status.toLowerCase() === 'success') {
           console.log('✅ Processing successful payment for:', externalRef);
           
           try {

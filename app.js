@@ -204,21 +204,23 @@ const REQUIRED_ENV_VARS = [
           console.log('🔍 Attempting to insert into payment_callbacks...');
           console.log('📝 Insert data:', {
             external_reference: externalRef,
-            status: status,
+            status,
             callback_data_length: JSON.stringify(data).length
           });
-          
+
           const { data: insertData, error: insertError } = await supabase
             .from('payment_callbacks')
-            .insert([{ 
-              external_reference: externalRef, 
-              callback_data: data, 
-              status 
-            }])
+            .insert([
+              {
+                external_reference: externalRef,
+                callback_data: data,
+                status
+              }
+            ])
             .select();
-          
+
           console.log('📊 Insert result:', { insertData, insertError });
-          
+
           if (insertError) {
             console.error('❌ Failed to store callback in payment_callbacks:', insertError);
             console.error('❌ Error code:', insertError.code);
@@ -226,18 +228,19 @@ const REQUIRED_ENV_VARS = [
             console.error('❌ Error hint:', insertError.hint);
             console.error('❌ Error message:', insertError.message);
             console.error('❌ Full error object:', JSON.stringify(insertError, null, 2));
-            
-            // Try alternative insert without select to see if that's the issue
+
             console.log('🔄 Trying alternative insert without .select()...');
             try {
               const { error: altError } = await supabase
                 .from('payment_callbacks')
-                .insert([{ 
-                  external_reference: externalRef, 
-                  callback_data: data, 
-                  status 
-                }]);
-              
+                .insert([
+                  {
+                    external_reference: externalRef,
+                    callback_data: data,
+                    status
+                  }
+                ]);
+
               if (altError) {
                 console.error('❌ Alternative insert also failed:', altError);
               } else {
@@ -258,92 +261,86 @@ const REQUIRED_ENV_VARS = [
         try {
           // Only process transactions on VERIFIED SUCCESS
           if (status && status.toLowerCase() === 'success') {
-          console.log('✅ Processing successful payment for:', externalRef);
-          
-          try {
-            // Get user_id from memory (stored during payment initiation)
-            const memoryData = transactionStatuses.get(externalRef);
-            const userId = memoryData?.user_id;
-            
-            if (!userId) {
-              console.error('❌ No user_id found in memory for:', externalRef);
-              return;
-            }
-            
-            console.log('👤 Using user_id from memory:', userId);
-            
-            // Extract amount from callback data
-            const amount = data?.response?.Amount || 5;
-            console.log('💰 Extracted amount:', amount);
-            console.log('📋 Transaction data to insert:', {
-              user_id: userId,
-              type: 'deposit',
-              amount: amount,
-              fee: 0,
-              net_amount: amount,
-              status: 'completed',
-              description: `M-Pesa deposit (${externalRef})`,
-              external_reference: externalRef,
-              payment_method: 'm-pesa',
-              processed_at: new Date().toISOString()
-            });
-            
-            // Create transaction directly
-            console.log('🔄 Attempting to create transaction...');
-            const { data: txData, error: txError } = await supabase
-              .from('transactions')
-              .insert([
-                {
-                  user_id: userId,
-                  type: 'deposit',
-                  amount: amount,
-                  fee: 0,
-                  net_amount: amount,
-                  status: 'completed',
-                  description: `M-Pesa deposit (${externalRef})`,
-                  external_reference: externalRef,
-                  payment_method: 'm-pesa',
-                  processed_at: new Date().toISOString()
-                }
-              ])
-              .select();
+            console.log('✅ Processing successful payment for:', externalRef);
 
-            console.log('📊 Transaction insert result:', { txData, txError });
+            try {
+              const memoryData = transactionStatuses.get(externalRef);
+              const userId = memoryData?.user_id;
 
-            if (txError) {
-              console.error('❌ Failed to create transaction:', txError);
-              console.error('❌ Transaction error code:', txError.code);
-              console.error('❌ Transaction error message:', txError.message);
-              console.error('❌ Transaction error details:', JSON.stringify(txError, null, 2));
-              
-              // Check if it's RLS issue
-              if (txError.code === '42501') {
-                console.error('🚨 RLS Policy Issue! Transactions table has RLS enabled');
-                console.error('💡 Solution: Disable RLS on transactions table or create service role policy');
+              if (!userId) {
+                console.error('❌ No user_id found in memory for:', externalRef);
+                return;
               }
-            } else {
-              console.log('💳 Transaction created successfully');
-              console.log('✅ Transaction ID:', txData?.[0]?.id);
+
+              console.log('👤 Using user_id from memory:', userId);
+
+              const amount = data?.response?.Amount || 5;
+              console.log('💰 Extracted amount:', amount);
+              console.log('📋 Transaction data to insert:', {
+                user_id: userId,
+                type: 'deposit',
+                amount,
+                fee: 0,
+                net_amount: amount,
+                status: 'completed',
+                description: `M-Pesa deposit (${externalRef})`,
+                external_reference: externalRef,
+                payment_method: 'm-pesa',
+                processed_at: new Date().toISOString()
+              });
+
+              console.log('🔄 Attempting to create transaction...');
+              const { data: txData, error: txError } = await supabase
+                .from('transactions')
+                .insert([
+                  {
+                    user_id: userId,
+                    type: 'deposit',
+                    amount,
+                    fee: 0,
+                    net_amount: amount,
+                    status: 'completed',
+                    description: `M-Pesa deposit (${externalRef})`,
+                    external_reference: externalRef,
+                    payment_method: 'm-pesa',
+                    processed_at: new Date().toISOString()
+                  }
+                ])
+                .select();
+
+              console.log('📊 Transaction insert result:', { txData, txError });
+
+              if (txError) {
+                console.error('❌ Failed to create transaction:', txError);
+                console.error('❌ Transaction error code:', txError.code);
+                console.error('❌ Transaction error message:', txError.message);
+                console.error('❌ Transaction error details:', JSON.stringify(txError, null, 2));
+
+                if (txError.code === '42501') {
+                  console.error('🚨 RLS Policy Issue! Transactions table has RLS enabled');
+                  console.error('💡 Solution: Disable RLS on transactions table or create service role policy');
+                }
+              } else {
+                console.log('💳 Transaction created successfully');
+                console.log('✅ Transaction ID:', txData?.[0]?.id);
+              }
+            } catch (processError) {
+              console.error('❌ Error processing successful payment:', processError);
+              console.error('❌ Process error stack:', processError.stack);
             }
-          } catch (processError) {
-            console.error('❌ Error processing successful payment:', processError);
-            console.error('❌ Process error stack:', processError.stack);
+          } else if (status && status.toLowerCase() === 'failed') {
+            console.log('❌ Payment failed for:', externalRef);
           }
-        } else if (status && status.toLowerCase() === 'failed') {
-          console.log('❌ Payment failed for:', externalRef);
+        } catch (processBlockError) {
+          console.error('❌ Error during payment processing block:', processBlockError);
+          console.error('❌ Block error stack:', processBlockError.stack);
         }
-        }
-      } catch (err) {
-        console.error('❌ Callback processing error:', err.message);
-        console.error('❌ Error stack:', err.stack);
       }
+    } catch (err) {
+      console.error('❌ Callback processing error:', err.message);
+      console.error('❌ Error stack:', err.stack);
+    }
 
-    res.sendStatus(200);
-  });
-
-  app.get('/api/status/:externalRef', async (req, res) => {
-    const externalRef = req.params.externalRef;
-    
     console.log('🔍 Status check for:', externalRef);
     
     // First check if we have VERIFIED callback data

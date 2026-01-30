@@ -336,7 +336,6 @@ const REQUIRED_ENV_VARS = [
         console.error('❌ Callback processing error:', err.message);
         console.error('❌ Error stack:', err.stack);
       }
-    }
 
     res.sendStatus(200);
   });

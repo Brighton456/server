@@ -332,7 +332,6 @@ const REQUIRED_ENV_VARS = [
         } else if (status && status.toLowerCase() === 'failed') {
           console.log('❌ Payment failed for:', externalRef);
         }
-        }
       } catch (err) {
         console.error('❌ Callback processing error:', err.message);
         console.error('❌ Error stack:', err.stack);

@@ -110,7 +110,7 @@ const REQUIRED_ENV_VARS = [
   const transactionStatuses = new Map();
 
   app.post('/api/pay', async (req, res) => {
-    let { phone, amount, reference } = req.body;
+    let { phone, amount, reference, user_id } = req.body;
     
     console.log('🚀 Payment initiation request:', { phone, amount, reference });
     console.log('🕐 Initiation timestamp:', new Date().toISOString());
@@ -150,10 +150,11 @@ const REQUIRED_ENV_VARS = [
           status: (data.status || 'QUEUED').toUpperCase(),
           details: data.message || 'STK Push initiated, waiting for user confirmation.',
           checkoutRequestID: data.CheckoutRequestID || null,
-          lastUpdated: new Date().toISOString()
+          lastUpdated: new Date().toISOString(),
+          user_id: user_id  // Store user_id for callback use
         });
         
-        console.log('💾 Stored in memory with key:', statusKey);
+        console.log('💾 Stored in memory with key:', statusKey, 'for user:', user_id);
       }
 
       res.json({
@@ -259,71 +260,69 @@ const REQUIRED_ENV_VARS = [
           console.log('✅ Processing successful payment for:', externalRef);
           
           try {
-            console.log('🔍 Looking for activation_payments record...');
-            const { data: paymentData, error: paymentError } = await supabase
-              .from('activation_payments')
-              .update({
-                status: 'SUCCESS',
-                confirmed_at: new Date().toISOString(),
-                payhero_response: data
-              })
-              .eq('external_reference', externalRef)
-              .select('user_id, amount')
-              .single();
+            // Get user_id from memory (stored during payment initiation)
+            const memoryData = transactionStatuses.get(externalRef);
+            const userId = memoryData?.user_id;
+            
+            if (!userId) {
+              console.error('❌ No user_id found in memory for:', externalRef);
+              return;
+            }
+            
+            console.log('👤 Using user_id from memory:', userId);
+            
+            // Extract amount from callback data
+            const amount = data?.response?.Amount || 5;
+            console.log('💰 Extracted amount:', amount);
+            console.log('📋 Transaction data to insert:', {
+              user_id: userId,
+              type: 'deposit',
+              amount: amount,
+              fee: 0,
+              net_amount: amount,
+              status: 'completed',
+              description: `M-Pesa deposit (${externalRef})`,
+              external_reference: externalRef,
+              payment_method: 'm-pesa',
+              processed_at: new Date().toISOString()
+            });
+            
+            // Create transaction directly
+            console.log('🔄 Attempting to create transaction...');
+            const { data: txData, error: txError } = await supabase
+              .from('transactions')
+              .insert([
+                {
+                  user_id: userId,
+                  type: 'deposit',
+                  amount: amount,
+                  fee: 0,
+                  net_amount: amount,
+                  status: 'completed',
+                  description: `M-Pesa deposit (${externalRef})`,
+                  external_reference: externalRef,
+                  payment_method: 'm-pesa',
+                  processed_at: new Date().toISOString()
+                }
+              ])
+              .select();
 
-            console.log('📊 Activation payments result:', { paymentData, paymentError });
+            console.log('📊 Transaction insert result:', { txData, txError });
 
-            if (paymentError) {
-              console.error('❌ Failed to update activation_payments:', paymentError);
-              console.error('❌ Activation payments error details:', JSON.stringify(paymentError, null, 2));
+            if (txError) {
+              console.error('❌ Failed to create transaction:', txError);
+              console.error('❌ Transaction error code:', txError.code);
+              console.error('❌ Transaction error message:', txError.message);
+              console.error('❌ Transaction error details:', JSON.stringify(txError, null, 2));
               
-              // Try to create transaction directly without activation_payments
-              console.log('🔄 Creating transaction directly without activation_payments...');
-              await createDirectTransaction(externalRef, data, paymentData?.user_id);
-              
-            } else if (paymentData) {
-              console.log('👤 Updating user activation and creating transaction for user:', paymentData.user_id);
-              
-              // Update user activation
-              await supabase
-                .from('users')
-                .update({
-                  is_activated: true,
-                  activation_date: new Date().toISOString()
-                })
-                .eq('id', paymentData.user_id);
-
-              // Distribute referral commissions
-              await supabase.rpc('distribute_referral_commissions', {
-                new_user_id: paymentData.user_id
-              });
-
-              // Create transaction record (ONLY PLACE) - Match actual table schema
-              const { error: txError } = await supabase
-                .from('transactions')
-                .insert([
-                  {
-                    user_id: paymentData.user_id,
-                    type: 'deposit',
-                    amount: paymentData.amount || 500,
-                    fee: 0,
-                    net_amount: paymentData.amount || 500,
-                    status: 'completed',
-                    description: 'Account activation fee',
-                    external_reference: externalRef,
-                    payment_method: 'm-pesa',
-                    processed_at: new Date().toISOString()
-                  }
-                ]);
-
-              if (txError) {
-                console.error('❌ Failed to create transaction:', txError);
-                console.error('❌ Transaction error details:', JSON.stringify(txError, null, 2));
-              } else {
-                console.log('💳 Transaction created for activation payment');
+              // Check if it's RLS issue
+              if (txError.code === '42501') {
+                console.error('🚨 RLS Policy Issue! Transactions table has RLS enabled');
+                console.error('💡 Solution: Disable RLS on transactions table or create service role policy');
               }
             } else {
-              console.log('❌ No activation_payments record found for:', externalRef);
+              console.log('💳 Transaction created successfully');
+              console.log('✅ Transaction ID:', txData?.[0]?.id);
             }
           } catch (processError) {
             console.error('❌ Error processing successful payment:', processError);
@@ -331,22 +330,11 @@ const REQUIRED_ENV_VARS = [
           }
         } else if (status && status.toLowerCase() === 'failed') {
           console.log('❌ Payment failed for:', externalRef);
-          
-          await supabase
-            .from('activation_payments')
-            .update({
-              status: 'FAILED',
-              payhero_response: data
-            })
-            .eq('external_reference', externalRef);
-        } else {
-          console.log('⏳ Payment pending/unknown status:', status, 'for:', externalRef);
         }
+      } catch (err) {
+        console.error('❌ Callback processing error:', err.message);
+        console.error('❌ Error stack:', err.stack);
       }
-    } catch (err) {
-      console.error('❌ Callback processing error:', err.message);
-      console.error('❌ Error stack:', err.stack);
-    }
 
     res.sendStatus(200);
   });

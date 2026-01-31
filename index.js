@@ -1,5 +1,5 @@
-import dotenv from 'dotenv';
-import { createApp } from './app.js';
+const dotenv = require('dotenv');
+const { createApp } = require('./app.js');
 
 dotenv.config();
 

@@ -323,6 +323,42 @@ const REQUIRED_ENV_VARS = [
               } else {
                 console.log('💳 Transaction created successfully');
                 console.log('✅ Transaction ID:', txData?.[0]?.id);
+                
+                // Update user's recharge_wallet
+                try {
+                  console.log('💰 Updating user wallet...');
+                  
+                  const { data: currentWallet, error: walletError } = await supabase
+                    .from('users')
+                    .select('recharge_wallet')
+                    .eq('id', userId)
+                    .single();
+                  
+                  if (walletError) {
+                    console.error('❌ Error fetching current wallet:', walletError);
+                  } else {
+                    const newBalance = (currentWallet?.recharge_wallet || 0) + amount;
+                    console.log('📊 Current wallet:', currentWallet?.recharge_wallet || 0);
+                    console.log('💰 Adding amount:', amount);
+                    console.log('🆕 New balance will be:', newBalance);
+                    
+                    const { data: updateResult, error: updateError } = await supabase
+                      .from('users')
+                      .update({ recharge_wallet: newBalance })
+                      .eq('id', userId)
+                      .select('recharge_wallet')
+                      .single();
+                    
+                    if (updateError) {
+                      console.error('❌ Error updating wallet:', updateError);
+                    } else {
+                      console.log('✅ Wallet updated successfully!');
+                      console.log('💰 New wallet balance:', updateResult?.recharge_wallet);
+                    }
+                  }
+                } catch (walletUpdateError) {
+                  console.error('❌ Wallet update exception:', walletUpdateError);
+                }
               }
             } catch (processError) {
               console.error('❌ Error processing successful payment:', processError);
@@ -341,7 +377,21 @@ const REQUIRED_ENV_VARS = [
       console.error('❌ Error stack:', err.stack);
     }
 
-    // First check if we have VERIFIED callback data
+    res.sendStatus(200);
+  });
+
+  app.get('/api/status/:externalRef', async (req, res) => {
+    const externalRef = req.params.externalRef;
+    const statusInfo = transactionStatuses.get(externalRef);
+
+    if (statusInfo) {
+      return res.json({ 
+        status: 'Success', 
+        payment_status: statusInfo,
+        timestamp: new Date().toISOString()
+      });
+    }
+
     try {
       const { data: callbackRows, error: callbackError } = await supabase
         .from('payment_callbacks')
@@ -351,24 +401,18 @@ const REQUIRED_ENV_VARS = [
         .limit(1);
 
       if (callbackError) {
-        console.error('❌ Callback query error:', callbackError);
+        throw callbackError;
       }
 
       if (callbackRows && callbackRows.length > 0) {
         const latest = callbackRows[0];
         const normalizedStatus = (latest.status || 'PENDING').toUpperCase();
-        
-        console.log('✅ Returning verified callback status:', normalizedStatus);
-        
         const payload = {
           status: normalizedStatus,
-          verified: true,
-          source: 'callback',
           full_callback: latest.callback_data,
           lastUpdated: latest.created_at
         };
 
-        // Update memory with verified data
         transactionStatuses.set(externalRef, payload);
 
         return res.json({
@@ -377,34 +421,20 @@ const REQUIRED_ENV_VARS = [
           timestamp: new Date().toISOString()
         });
       }
-    } catch (error) {
-      console.error('❌ Callback check error:', error.message);
-    }
 
-    // Fallback to memory status if no callback received
-    const statusInfo = transactionStatuses.get(externalRef);
-    if (statusInfo) {
-      console.log('⏳ Returning memory status (unverified):', statusInfo.status);
-      
-      return res.json({ 
-        status: 'Success', 
-        payment_status: {
-          ...statusInfo,
-          verified: false,
-          source: 'memory'
-        },
+      return res.status(202).json({
+        status: 'Pending',
+        message: 'Payment status not yet available',
+        timestamp: new Date().toISOString()
+      });
+    } catch (error) {
+      console.error('Status lookup error:', error.message);
+      return res.status(500).json({
+        status: 'Failure',
+        message: 'Unable to retrieve payment status',
         timestamp: new Date().toISOString()
       });
     }
-
-    console.log('❓ No status found for:', externalRef);
-    return res.status(202).json({
-      status: 'Pending',
-      message: 'Payment status not yet available',
-      verified: false,
-      source: 'none',
-      timestamp: new Date().toISOString()
-    });
   });
 
   app.get('/', (req, res) => {

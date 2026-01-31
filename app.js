@@ -341,8 +341,6 @@ const REQUIRED_ENV_VARS = [
       console.error('❌ Error stack:', err.stack);
     }
 
-    console.log('🔍 Status check for:', externalRef);
-    
     // First check if we have VERIFIED callback data
     try {
       const { data: callbackRows, error: callbackError } = await supabase

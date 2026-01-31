@@ -330,12 +330,35 @@ const REQUIRED_ENV_VARS = [
                   
                   const { data: currentWallet, error: walletError } = await supabase
                     .from('users')
-                    .select('recharge_wallet')
+                    .select('recharge_wallet, main_wallet')
                     .eq('id', userId)
                     .single();
                   
                   if (walletError) {
                     console.error('❌ Error fetching current wallet:', walletError);
+                    
+                    // If user doesn't exist, create them first
+                    if (walletError.code === 'PGRST116') {
+                      console.log('👤 User not found, creating user record...');
+                      
+                      const { data: newUser, error: createError } = await supabase
+                        .from('users')
+                        .insert([{
+                          id: userId,
+                          recharge_wallet: amount,
+                          main_wallet: 0,
+                          created_at: new Date().toISOString()
+                        }])
+                        .select('recharge_wallet')
+                        .single();
+                      
+                      if (createError) {
+                        console.error('❌ Error creating user:', createError);
+                      } else {
+                        console.log('✅ User created and wallet funded!');
+                        console.log('💰 Initial wallet balance:', newUser?.recharge_wallet);
+                      }
+                    }
                   } else {
                     const newBalance = (currentWallet?.recharge_wallet || 0) + amount;
                     console.log('📊 Current wallet:', currentWallet?.recharge_wallet || 0);

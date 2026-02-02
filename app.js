@@ -297,40 +297,41 @@ const REQUIRED_ENV_VARS = [
               processed_at: new Date().toISOString()
             });
 
+            try {
               console.log('🔄 Attempting to create transaction...');
-            const { data: txData, error: txError } = await supabase
-              .from('transactions')
-              .insert([
-                {
-                  user_id: userId,
-                  type: 'deposit',
-                  amount,
-                  fee: 0,
-                  net_amount: amount,
-                  status: 'completed',
-                  description: `M-Pesa deposit (${externalRef})`,
-                  external_reference: externalRef,
-                  payment_method: 'm-pesa',
-                  processed_at: new Date().toISOString()
+              const { data: txData, error: txError } = await supabase
+                .from('transactions')
+                .insert([
+                  {
+                    user_id: userId,
+                    type: 'deposit',
+                    amount,
+                    fee: 0,
+                    net_amount: amount,
+                    status: 'completed',
+                    description: `M-Pesa deposit (${externalRef})`,
+                    external_reference: externalRef,
+                    payment_method: 'm-pesa',
+                    processed_at: new Date().toISOString()
+                  }
+                ])
+                .select();
+
+              console.log('📊 Transaction insert result:', { txData, txError });
+
+              if (txError) {
+                console.error('❌ Failed to create transaction:', txError);
+                console.error('❌ Transaction error code:', txError.code);
+                console.error('❌ Transaction error message:', txError.message);
+                console.error('❌ Transaction error details:', JSON.stringify(txError, null, 2));
+
+                if (txError.code === '42501') {
+                  console.error('🚨 RLS Policy Issue! Transactions table has RLS enabled');
+                  console.error('💡 Solution: Disable RLS on transactions table or create service role policy');
                 }
-              ])
-              .select();
-
-            console.log('📊 Transaction insert result:', { txData, txError });
-
-            if (txError) {
-              console.error('❌ Failed to create transaction:', txError);
-              console.error('❌ Transaction error code:', txError.code);
-              console.error('❌ Transaction error message:', txError.message);
-              console.error('❌ Transaction error details:', JSON.stringify(txError, null, 2));
-
-              if (txError.code === '42501') {
-                console.error('🚨 RLS Policy Issue! Transactions table has RLS enabled');
-                console.error('💡 Solution: Disable RLS on transactions table or create service role policy');
-              }
-            } else {
-              console.log('💳 Transaction created successfully');
-              console.log('✅ Transaction ID:', txData?.[0]?.id);
+              } else {
+                console.log('💳 Transaction created successfully');
+                console.log('✅ Transaction ID:', txData?.[0]?.id);
                 
                 // Update user's recharge_wallet
                 try {
@@ -376,9 +377,9 @@ const REQUIRED_ENV_VARS = [
                   console.error('❌ Wallet update exception:', walletUpdateError);
                 }
               }
-            } catch (processError) {
-              console.error('❌ Error processing successful payment:', processError);
-              console.error('❌ Process error stack:', processError.stack);
+            } catch (transactionError) {
+              console.error('❌ Error in transaction creation:', transactionError);
+              console.error('❌ Transaction error stack:', transactionError.stack);
             }
           } else if (status && status.toLowerCase() === 'failed') {
             console.log('❌ Payment failed for:', externalRef);

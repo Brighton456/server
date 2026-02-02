@@ -144,6 +144,9 @@ const REQUIRED_ENV_VARS = [
       console.log('✅ PayHero response:', JSON.stringify(data, null, 2));
 
       const statusKey = data?.external_reference || reference;
+      console.log('🔑 Using statusKey for memory storage:', statusKey);
+      console.log('🔑 Original reference from request:', reference);
+      console.log('🔑 PayHero external_reference:', data?.external_reference);
 
       if (statusKey) {
         transactionStatuses.set(statusKey, {
@@ -155,6 +158,7 @@ const REQUIRED_ENV_VARS = [
         });
         
         console.log('💾 Stored in memory with key:', statusKey, 'for user:', user_id);
+        console.log('📋 Memory contents:', Array.from(transactionStatuses.entries()));
       }
 
       res.json({
@@ -197,6 +201,12 @@ const REQUIRED_ENV_VARS = [
         externalRef,
         hasExternalRef: !!externalRef
       });
+      
+      console.log('🔍 Looking for user_id with key:', externalRef);
+      console.log('📋 Current memory contents:', Array.from(transactionStatuses.entries()));
+      
+      const memoryData = transactionStatuses.get(externalRef);
+      console.log('👤 Memory data found:', memoryData);
 
       if (externalRef) {
         // Store callback data first
@@ -263,111 +273,93 @@ const REQUIRED_ENV_VARS = [
           if (status && status.toLowerCase() === 'success') {
             console.log('✅ Processing successful payment for:', externalRef);
 
-            try {
-              const memoryData = transactionStatuses.get(externalRef);
-              const userId = memoryData?.user_id;
+            const userId = memoryData?.user_id;
 
-              if (!userId) {
-                console.error('❌ No user_id found in memory for:', externalRef);
-                return;
-              }
+            if (!userId) {
+              console.error('❌ No user_id found in memory for:', externalRef);
+              return;
+            }
 
-              console.log('👤 Using user_id from memory:', userId);
+            console.log('👤 Using user_id from memory:', userId);
 
-              const amount = data?.response?.Amount || 5;
-              console.log('💰 Extracted amount:', amount);
-              console.log('📋 Transaction data to insert:', {
-                user_id: userId,
-                type: 'deposit',
-                amount,
-                fee: 0,
-                net_amount: amount,
-                status: 'completed',
-                description: `M-Pesa deposit (${externalRef})`,
-                external_reference: externalRef,
-                payment_method: 'm-pesa',
-                processed_at: new Date().toISOString()
-              });
+            const amount = data?.response?.Amount || 5;
+            console.log('💰 Extracted amount:', amount);
+            console.log('📋 Transaction data to insert:', {
+              user_id: userId,
+              type: 'deposit',
+              amount,
+              fee: 0,
+              net_amount: amount,
+              status: 'completed',
+              description: `M-Pesa deposit (${externalRef})`,
+              external_reference: externalRef,
+              payment_method: 'm-pesa',
+              processed_at: new Date().toISOString()
+            });
 
               console.log('🔄 Attempting to create transaction...');
-              const { data: txData, error: txError } = await supabase
-                .from('transactions')
-                .insert([
-                  {
-                    user_id: userId,
-                    type: 'deposit',
-                    amount,
-                    fee: 0,
-                    net_amount: amount,
-                    status: 'completed',
-                    description: `M-Pesa deposit (${externalRef})`,
-                    external_reference: externalRef,
-                    payment_method: 'm-pesa',
-                    processed_at: new Date().toISOString()
-                  }
-                ])
-                .select();
-
-              console.log('📊 Transaction insert result:', { txData, txError });
-
-              if (txError) {
-                console.error('❌ Failed to create transaction:', txError);
-                console.error('❌ Transaction error code:', txError.code);
-                console.error('❌ Transaction error message:', txError.message);
-                console.error('❌ Transaction error details:', JSON.stringify(txError, null, 2));
-
-                if (txError.code === '42501') {
-                  console.error('🚨 RLS Policy Issue! Transactions table has RLS enabled');
-                  console.error('💡 Solution: Disable RLS on transactions table or create service role policy');
+            const { data: txData, error: txError } = await supabase
+              .from('transactions')
+              .insert([
+                {
+                  user_id: userId,
+                  type: 'deposit',
+                  amount,
+                  fee: 0,
+                  net_amount: amount,
+                  status: 'completed',
+                  description: `M-Pesa deposit (${externalRef})`,
+                  external_reference: externalRef,
+                  payment_method: 'm-pesa',
+                  processed_at: new Date().toISOString()
                 }
-              } else {
-                console.log('💳 Transaction created successfully');
-                console.log('✅ Transaction ID:', txData?.[0]?.id);
+              ])
+              .select();
+
+            console.log('📊 Transaction insert result:', { txData, txError });
+
+            if (txError) {
+              console.error('❌ Failed to create transaction:', txError);
+              console.error('❌ Transaction error code:', txError.code);
+              console.error('❌ Transaction error message:', txError.message);
+              console.error('❌ Transaction error details:', JSON.stringify(txError, null, 2));
+
+              if (txError.code === '42501') {
+                console.error('🚨 RLS Policy Issue! Transactions table has RLS enabled');
+                console.error('💡 Solution: Disable RLS on transactions table or create service role policy');
+              }
+            } else {
+              console.log('💳 Transaction created successfully');
+              console.log('✅ Transaction ID:', txData?.[0]?.id);
                 
                 // Update user's recharge_wallet
                 try {
                   console.log('💰 Updating user wallet...');
+                  console.log('👤 Using user_id from transaction:', userId);
                   
-                  const { data: currentWallet, error: walletError } = await supabase
+                  // Get current wallet balance
+                  const { data: profile, error: profileError } = await supabase
                     .from('users')
-                    .select('recharge_wallet, main_wallet')
+                    .select('recharge_wallet')
                     .eq('id', userId)
                     .single();
                   
-                  if (walletError) {
-                    console.error('❌ Error fetching current wallet:', walletError);
-                    
-                    // If user doesn't exist, create them first
-                    if (walletError.code === 'PGRST116') {
-                      console.log('👤 User not found, creating user record...');
-                      
-                      const { data: newUser, error: createError } = await supabase
-                        .from('users')
-                        .insert([{
-                          id: userId,
-                          recharge_wallet: amount,
-                          main_wallet: 0,
-                          created_at: new Date().toISOString()
-                        }])
-                        .select('recharge_wallet')
-                        .single();
-                      
-                      if (createError) {
-                        console.error('❌ Error creating user:', createError);
-                      } else {
-                        console.log('✅ User created and wallet funded!');
-                        console.log('💰 Initial wallet balance:', newUser?.recharge_wallet);
-                      }
-                    }
+                  if (profileError) {
+                    console.error('❌ Error fetching user profile:', profileError);
+                    console.log('⚠️ Wallet update failed, but transaction was created');
                   } else {
-                    const newBalance = (currentWallet?.recharge_wallet || 0) + amount;
-                    console.log('📊 Current wallet:', currentWallet?.recharge_wallet || 0);
+                    const newBalance = (profile?.recharge_wallet || 0) + amount;
+                    console.log('📊 Current recharge_wallet:', profile?.recharge_wallet || 0);
                     console.log('💰 Adding amount:', amount);
                     console.log('🆕 New balance will be:', newBalance);
                     
-                    const { data: updateResult, error: updateError } = await supabase
+                    // Update the recharge_wallet
+                    const { data: updatedProfile, error: updateError } = await supabase
                       .from('users')
-                      .update({ recharge_wallet: newBalance })
+                      .update({ 
+                        recharge_wallet: newBalance,
+                        updated_at: new Date().toISOString()
+                      })
                       .eq('id', userId)
                       .select('recharge_wallet')
                       .single();
@@ -376,9 +368,10 @@ const REQUIRED_ENV_VARS = [
                       console.error('❌ Error updating wallet:', updateError);
                     } else {
                       console.log('✅ Wallet updated successfully!');
-                      console.log('💰 New wallet balance:', updateResult?.recharge_wallet);
+                      console.log('💰 New recharge_wallet balance:', updatedProfile?.recharge_wallet);
                     }
                   }
+                  
                 } catch (walletUpdateError) {
                   console.error('❌ Wallet update exception:', walletUpdateError);
                 }

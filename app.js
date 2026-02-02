@@ -347,7 +347,9 @@ const REQUIRED_ENV_VARS = [
                   
                   if (profileError) {
                     console.error('❌ Error fetching user profile:', profileError);
+                    console.error('❌ This might be an RLS policy issue with the service role');
                     console.log('⚠️ Wallet update failed, but transaction was created');
+                    console.log('💡 User exists in database but server cannot access due to RLS');
                   } else {
                     const newBalance = (profile?.recharge_wallet || 0) + amount;
                     console.log('📊 Current recharge_wallet:', profile?.recharge_wallet || 0);
@@ -367,6 +369,7 @@ const REQUIRED_ENV_VARS = [
                     
                     if (updateError) {
                       console.error('❌ Error updating wallet:', updateError);
+                      console.error('❌ This might be an RLS policy issue with the service role');
                     } else {
                       console.log('✅ Wallet updated successfully!');
                       console.log('💰 New recharge_wallet balance:', updatedProfile?.recharge_wallet);

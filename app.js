@@ -4,15 +4,14 @@ const { createClient } = require('@supabase/supabase-js');
 const cors = require('cors');
 
 const REQUIRED_ENV_VARS = [
-  'PAYHERO_USERNAME',
-  'PAYHERO_API_PASSWORD',
-  'PAYHERO_CHANNEL_ID',
+  'SWIFTWALLET_API_KEY',
+  'SWIFTWALLET_CHANNEL_ID',
   'CALLBACK_URL',
   'SUPABASE_URL',
   'SUPABASE_SERVICE_KEY',
 ];
 
-  const createApp = () => {
+const createApp = () => {
   const app = express();
 
   // Configure CORS to allow your Netlify frontend
@@ -28,27 +27,26 @@ const REQUIRED_ENV_VARS = [
   app.use(express.json());
   app.use(express.static('public'));
 
-  const PAYHERO_API = 'https://backend.payhero.co.ke/api/v2/payments';
+  const SWIFTWALLET_API = 'https://swiftwallet.co.ke/v3/stk-initiate/';
 
   const missingEnv = REQUIRED_ENV_VARS.filter((key) => !process.env[key]);
   if (missingEnv.length) {
     console.warn(`⚠️ Missing environment variables: ${missingEnv.join(', ')}`);
   }
 
-  const authString = `${process.env.PAYHERO_USERNAME || ''}:${process.env.PAYHERO_API_PASSWORD || ''}`;
-  const PAYHERO_BASIC_AUTH = 'Basic ' + Buffer.from(authString).toString('base64');
+  const SWIFTWALLET_API_KEY = process.env.SWIFTWALLET_API_KEY || '';
 
   const supabase = createClient(
     process.env.SUPABASE_URL,
     process.env.SUPABASE_SERVICE_KEY
   );
 
-  // Helper function to create transaction directly
+  // Helper function to create transaction directly (EXACT same as PayHero)
   async function createDirectTransaction(externalRef, callbackData, userId = null) {
     try {
       console.log('🔄 Creating direct transaction for:', externalRef);
       
-      // Extract amount from callback data
+      // Extract amount from callback data (EXACT same as PayHero)
       const amount = callbackData?.response?.Amount || 5;
       
       let userData;
@@ -57,7 +55,7 @@ const REQUIRED_ENV_VARS = [
         console.log('👤 Using provided user_id:', userId);
         userData = { id: userId };
       } else {
-        // Find user by phone (or use a default user for testing)
+        // Find user by phone (EXACT same as PayHero)
         const phone = callbackData?.response?.Phone || '';
         console.log('📱 Looking up user by phone:', phone);
         
@@ -109,6 +107,37 @@ const REQUIRED_ENV_VARS = [
 
   const transactionStatuses = new Map();
 
+  // Function to transform SwiftWallet response to PayHero format
+  function transformSwiftWalletToPayHero(swiftResponse) {
+    return {
+      status: swiftResponse?.status?.toLowerCase() === 'initiated' ? 'QUEUED' : (swiftResponse?.status || 'QUEUED'),
+      message: swiftResponse?.message || 'STK Push initiated.',
+      CheckoutRequestID: swiftResponse?.checkout_request_id || null,
+      external_reference: swiftResponse?.reference || swiftResponse?.external_reference
+    };
+  }
+
+  // Function to transform SwiftWallet callback to PayHero format
+  function transformSwiftWalletCallbackToPayHero(swiftCallback) {
+    // Create PayHero-compatible callback structure
+    const payHeroCallback = {
+      response: {
+        Status: swiftCallback?.success === true && (swiftCallback?.status === 'completed' || swiftCallback?.status === 'COMPLETED') ? 'Success' : 'Failed',
+        Amount: swiftCallback?.result?.Amount || swiftCallback?.amount || 5,
+        Phone: swiftCallback?.result?.Phone || '',
+        ExternalReference: swiftCallback?.external_reference,
+        TransactionDate: swiftCallback?.result?.TransactionDate || new Date().toISOString().replace(/[-:T]/g, '').slice(0, 14),
+        MpesaReceiptNumber: swiftCallback?.result?.MpesaReceiptNumber || '',
+        ResultCode: swiftCallback?.result?.ResultCode || (swiftCallback?.success === true ? 0 : 1),
+        ResultDesc: swiftCallback?.result?.ResultDesc || swiftCallback?.message || 'Transaction processed'
+      },
+      external_reference: swiftCallback?.external_reference,
+      reference: swiftCallback?.external_reference
+    };
+    
+    return payHeroCallback;
+  }
+
   app.post('/api/pay', async (req, res) => {
     let { phone, amount, reference, user_id } = req.body;
     
@@ -120,74 +149,85 @@ const REQUIRED_ENV_VARS = [
     
     console.log('📱 Formatted phone:', fullPhone);
 
+    // SwiftWallet payload
     const payload = {
-      channel_id: process.env.PAYHERO_CHANNEL_ID,
-      amount,
+      amount: amount,
       phone_number: fullPhone,
+      channel_id: process.env.SWIFTWALLET_CHANNEL_ID,
       external_reference: reference,
-      callback_url: process.env.CALLBACK_URL,
-      provider: 'm-pesa'
+      callback_url: process.env.CALLBACK_URL
     };
     
-    console.log('📤 PayHero payload:', JSON.stringify(payload, null, 2));
+    console.log('📤 SwiftWallet payload:', JSON.stringify(payload, null, 2));
     console.log('🔗 Callback URL:', process.env.CALLBACK_URL);
 
     try {
-      const response = await axios.post(PAYHERO_API, payload, {
+      const response = await axios.post(SWIFTWALLET_API, payload, {
         headers: {
-          Authorization: PAYHERO_BASIC_AUTH,
+          Authorization: `Bearer ${SWIFTWALLET_API_KEY}`,
           'Content-Type': 'application/json'
         }
       });
 
-      const data = response.data;
-      console.log('✅ PayHero response:', JSON.stringify(data, null, 2));
+      const swiftData = response.data;
+      console.log('✅ SwiftWallet response:', JSON.stringify(swiftData, null, 2));
 
-      const statusKey = data?.external_reference || reference;
+      // Transform SwiftWallet response to PayHero format
+      const payHeroData = transformSwiftWalletToPayHero(swiftData);
+      console.log('🔄 Transformed to PayHero format:', JSON.stringify(payHeroData, null, 2));
+
+      const statusKey = payHeroData?.external_reference || reference;
       console.log('🔑 Using statusKey for memory storage:', statusKey);
       console.log('🔑 Original reference from request:', reference);
-      console.log('🔑 PayHero external_reference:', data?.external_reference);
+      console.log('🔑 PayHero external_reference:', payHeroData?.external_reference);
 
       if (statusKey) {
         transactionStatuses.set(statusKey, {
-          status: (data.status || 'QUEUED').toUpperCase(),
-          details: data.message || 'STK Push initiated, waiting for user confirmation.',
-          checkoutRequestID: data.CheckoutRequestID || null,
+          status: (payHeroData.status || 'QUEUED').toUpperCase(),
+          details: payHeroData.message || 'STK Push initiated, waiting for user confirmation.',
+          checkoutRequestID: payHeroData.CheckoutRequestID || null,
           lastUpdated: new Date().toISOString(),
-          user_id: user_id  // Store user_id for callback use
+          user_id: user_id,  // Store user_id for callback use
+          verified: false  // Initially not verified
         });
         
         console.log('💾 Stored in memory with key:', statusKey, 'for user:', user_id);
         console.log('📋 Memory contents:', Array.from(transactionStatuses.entries()));
       }
 
+      // Return PayHero-compatible response
       res.json({
-        status: data.status || 'QUEUED',
-        message: data.message || 'STK Push initiated.',
-        checkoutRequestID: data.CheckoutRequestID || null,
+        status: payHeroData.status || 'QUEUED',
+        message: payHeroData.message || 'STK Push initiated.',
+        checkoutRequestID: payHeroData.CheckoutRequestID || null,
         external_reference: statusKey,
-        raw: data
+        raw: swiftData  // Keep raw for debugging
       });
     } catch (error) {
       console.error('❌ Payment initiation error:', error.response?.data || error.message);
       console.error('❌ Error stack:', error.stack);
       res.status(500).json({
         status: 'Failure',
-        message: error.response?.data?.message || error.message || 'Payment failed',
+        message: error.response?.data?.error || error.message || 'Payment failed',
         error: error.response?.data || null
       });
     }
   });
 
   app.post('/api/callback', async (req, res) => {
-    const data = req.body;
+    const swiftData = req.body;
     
     // 🔥 LOG ALL CALLBACKS FOR DEBUGGING
-    console.log('🔥 PAYMENT CALLBACK RECEIVED:', JSON.stringify(data, null, 2));
+    console.log('🔥 SWIFTWALLET CALLBACK RECEIVED:', JSON.stringify(swiftData, null, 2));
     console.log('🕐 Callback timestamp:', new Date().toISOString());
     console.log('📧 Headers:', JSON.stringify(req.headers, null, 2));
 
+    // Transform SwiftWallet callback to PayHero format
+    const data = transformSwiftWalletCallbackToPayHero(swiftData);
+    console.log('🔄 Transformed to PayHero callback format:', JSON.stringify(data, null, 2));
+
     try {
+      // EXACT same logic as original PayHero callback
       const statusRaw = data?.response?.Status || data?.status;
       const status = statusRaw ? statusRaw.toUpperCase() : null;
       const externalRef = data?.response?.ExternalReference
@@ -209,7 +249,7 @@ const REQUIRED_ENV_VARS = [
       console.log('👤 Memory data found:', memoryData);
 
       if (externalRef) {
-        // Store callback data first
+        // Store callback data first (EXACT same as PayHero)
         try {
           console.log('🔍 Attempting to insert into payment_callbacks...');
           console.log('📝 Insert data:', {
@@ -223,7 +263,7 @@ const REQUIRED_ENV_VARS = [
             .insert([
               {
                 external_reference: externalRef,
-                callback_data: data,
+                callback_data: data,  // Store PayHero-formatted data
                 status
               }
             ])
@@ -269,7 +309,7 @@ const REQUIRED_ENV_VARS = [
         }
 
         try {
-          // Only process transactions on VERIFIED SUCCESS
+          // Only process transactions on VERIFIED SUCCESS (EXACT same as PayHero)
           if (status && status.toLowerCase() === 'success') {
             console.log('✅ Processing successful payment for:', externalRef);
 
@@ -333,7 +373,7 @@ const REQUIRED_ENV_VARS = [
                 console.log('💳 Transaction created successfully');
                 console.log('✅ Transaction ID:', txData?.[0]?.id);
                 
-                // Update user's recharge_wallet
+                // Update user's recharge_wallet (EXACT same as PayHero)
                 try {
                   console.log('💰 Updating user wallet...');
                   console.log('👤 Using user_id from transaction:', userId);
@@ -387,6 +427,18 @@ const REQUIRED_ENV_VARS = [
           } else if (status && status.toLowerCase() === 'failed') {
             console.log('❌ Payment failed for:', externalRef);
           }
+          
+          // Update memory status with verification (EXACT same as PayHero)
+          if (memoryData && externalRef) {
+            const isVerified = status && status.toLowerCase() === 'success';
+            transactionStatuses.set(externalRef, {
+              ...memoryData,
+              status: status ? status.toUpperCase() : memoryData.status,
+              verified: isVerified,
+              lastUpdated: new Date().toISOString()
+            });
+            console.log(`🔄 Updated memory status for ${externalRef}: ${status?.toUpperCase()}, verified: ${isVerified}`);
+          }
         } catch (processBlockError) {
           console.error('❌ Error during payment processing block:', processBlockError);
           console.error('❌ Block error stack:', processBlockError.stack);
@@ -400,6 +452,7 @@ const REQUIRED_ENV_VARS = [
     res.sendStatus(200);
   });
 
+  // EXACT same as PayHero status endpoint
   app.get('/api/status/:externalRef', async (req, res) => {
     const externalRef = req.params.externalRef;
     const statusInfo = transactionStatuses.get(externalRef);
@@ -408,6 +461,7 @@ const REQUIRED_ENV_VARS = [
       return res.json({ 
         status: 'Success', 
         payment_status: statusInfo,
+        verified: statusInfo.status === 'SUCCESS' || statusInfo.status === 'COMPLETED',
         timestamp: new Date().toISOString()
       });
     }
@@ -438,6 +492,7 @@ const REQUIRED_ENV_VARS = [
         return res.json({
           status: 'Success',
           payment_status: payload,
+          verified: normalizedStatus === 'SUCCESS' || normalizedStatus === 'COMPLETED',
           timestamp: new Date().toISOString()
         });
       }
@@ -445,6 +500,7 @@ const REQUIRED_ENV_VARS = [
       return res.status(202).json({
         status: 'Pending',
         message: 'Payment status not yet available',
+        verified: false,
         timestamp: new Date().toISOString()
       });
     } catch (error) {
@@ -457,6 +513,7 @@ const REQUIRED_ENV_VARS = [
     }
   });
 
+  // EXACT same as PayHero
   app.get('/', (req, res) => {
     res.json({
       status: 'Server is running',
@@ -471,6 +528,7 @@ const REQUIRED_ENV_VARS = [
     });
   });
 
+  // EXACT same as PayHero
   app.get('/health', (req, res) => {
     res.status(200).json({
       status: 'healthy',
@@ -480,7 +538,7 @@ const REQUIRED_ENV_VARS = [
     });
   });
 
-  // ✅ Internal route for scheduler
+  // EXACT same as PayHero
   app.post('/internal/ping', (req, res) => {
     console.log("✅ Self-message received:", req.body);
     res.send("OK");

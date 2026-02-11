@@ -218,12 +218,53 @@ const createApp = () => {
     try {
       logProcess('API_CALL_START', { endpoint: SWIFTWALLET_API }, 'INFO');
       
-      const response = await axios.post(SWIFTWALLET_API, payload, {
-        headers: {
-          Authorization: `Bearer ${SWIFTWALLET_API_KEY}`,
-          'Content-Type': 'application/json'
+      // Add retry logic for SwiftWallet API
+      let lastError;
+      let response;
+      
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+          logProcess('API_ATTEMPT', { attempt, max_attempts: 3 }, 'INFO');
+          
+          response = await axios.post(SWIFTWALLET_API, payload, {
+            headers: {
+              Authorization: `Bearer ${process.env.SWIFTWALLET_API_KEY}`,
+              'Content-Type': 'application/json'
+            },
+            timeout: 30000
+          });
+
+          logProcess('API_SUCCESS', {
+            attempt: attempt,
+            status: response.status,
+            data: response.data
+          }, 'SUCCESS');
+          
+          // Success! Break out of retry loop
+          break;
+          
+        } catch (error) {
+          lastError = error;
+          logProcess('API_ERROR', {
+            attempt: attempt,
+            error: error.message,
+            response_data: error.response?.data,
+            status_code: error.response?.status,
+            stack: error.stack
+          }, 'ERROR');
+          
+          console.error('❌ Payment initiation error:', error.response?.data || error.message);
+          console.error('❌ Error stack:', error.stack);
+          
+          if (attempt < 3) {
+            console.log('🔄 Retrying SwiftWallet API call...');
+            // Wait 2 seconds before retry
+            await new Promise(resolve => setTimeout(resolve, 2000));
+          } else {
+            throw error;
+          }
         }
-      });
+      }
 
       const swiftData = response.data;
       logProcess('SWIFTWALLET_RESPONSE', { 

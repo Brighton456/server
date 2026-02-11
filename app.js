@@ -661,18 +661,46 @@ const createApp = () => {
           console.log('❌ Payment failed for:', externalRef);
         }
           
-          // Update memory status with verification (EXACT same as PayHero)
-          if (memoryData && externalRef) {
-            const isVerified = status && status.toLowerCase() === 'success';
-            transactionStatuses.set(externalRef, {
-              ...memoryData,
-              status: status ? status.toUpperCase() : memoryData.status,
-              verified: isVerified,
-              lastUpdated: new Date().toISOString()
-            });
-            console.log(`🔄 Updated memory status for ${externalRef}: ${status?.toUpperCase()}, verified: ${isVerified}`);
-          }
-        } catch (processBlockError) {
+        // Update memory status with verification (EXACT same as PayHero)
+        if (memoryData && externalRef) {
+          const isVerified = status && status.toLowerCase() === 'success';
+          transactionStatuses.set(externalRef, {
+            ...memoryData,
+            status: status ? status.toUpperCase() : memoryData.status,
+            verified: isVerified,
+            lastUpdated: new Date().toISOString()
+          });
+          console.log(`🔄 Updated memory status for ${externalRef}: ${status?.toUpperCase()}, verified: ${isVerified}`);
+        }
+      } catch (processBlockError) {
+        logProcess('CALLBACK_PROCESSING_ERROR', {
+          external_ref: externalRef,
+          error: processBlockError.message,
+          stack: processBlockError.stack
+        }, 'ERROR');
+        
+        console.error('❌ Callback processing error:', processBlockError.message);
+        console.error('❌ Error stack:', processBlockError.stack);
+      }
+
+      res.sendStatus(200);
+    } catch (err) {
+      logProcess('CALLBACK_EXCEPTION', {
+        error: err.message,
+        stack: err.stack
+      }, 'ERROR');
+      
+      console.error('❌ Callback processing error:', err.message);
+      console.error('❌ Error stack:', err.stack);
+      res.sendStatus(200);
+    }
+  });
+
+  // EXACT same as PayHero status endpoint
+  app.get('/api/status/:externalRef', async (req, res) => {
+    const externalRef = req.params.externalRef;
+    logProcess('STATUS_CHECK_START', {
+      external_ref: externalRef,
       ip: req.ip,
       user_agent: req.get('User-Agent')
     }, 'INFO');

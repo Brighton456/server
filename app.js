@@ -656,28 +656,32 @@ const createApp = () => {
             console.error('❌ Error in transaction creation:', transactionError);
             console.error('❌ Transaction error stack:', transactionError.stack);
           }
-        } else if (status && status.toLowerCase() === 'failed') {
-          logProcess('TRANSACTION_FAILED', { external_ref: externalRef, status: status }, 'INFO');
-          console.log('❌ Payment failed for:', externalRef);
-        }
+        if (status && status.toLowerCase() === 'failed') {
+            logProcess('TRANSACTION_FAILED', { external_ref: externalRef, status: status }, 'INFO');
+            console.log('❌ Payment failed for:', externalRef);
+          }
           
-        // Update memory status with verification (EXACT same as PayHero)
-        if (memoryData && externalRef) {
-          const isVerified = status && status.toLowerCase() === 'success';
-          transactionStatuses.set(externalRef, {
-            ...memoryData,
-            status: status ? status.toUpperCase() : memoryData.status,
-            verified: isVerified,
-            lastUpdated: new Date().toISOString()
-          });
-          console.log(`🔄 Updated memory status for ${externalRef}: ${status?.toUpperCase()}, verified: ${isVerified}`);
+          // Update memory status with verification (EXACT same as PayHero)
+          if (memoryData && externalRef) {
+            const isVerified = status && status.toLowerCase() === 'success';
+            transactionStatuses.set(externalRef, {
+              ...memoryData,
+              status: status ? status.toUpperCase() : memoryData.status,
+              verified: isVerified,
+              lastUpdated: new Date().toISOString()
+            });
+            console.log(`🔄 Updated memory status for ${externalRef}: ${status?.toUpperCase()}, verified: ${isVerified}`);
+          }
+        } catch (processBlockError) {
+          logProcess('CALLBACK_PROCESSING_ERROR', {
+            external_ref: externalRef,
+            error: processBlockError.message,
+            stack: processBlockError.stack
+          }, 'ERROR');
+          
+          console.error('❌ Callback processing error:', processBlockError.message);
+          console.error('❌ Error stack:', processBlockError.stack);
         }
-      } catch (processBlockError) {
-        logProcess('CALLBACK_PROCESSING_ERROR', {
-          external_ref: externalRef,
-          error: processBlockError.message,
-          stack: processBlockError.stack
-        }, 'ERROR');
         
         console.error('❌ Callback processing error:', processBlockError.message);
         console.error('❌ Error stack:', processBlockError.stack);

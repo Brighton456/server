@@ -200,10 +200,10 @@ const createApp = () => {
       amount: amount,
       phone_number: fullPhone,
       channel_id: process.env.SWIFTWALLET_CHANNEL_ID,
-      external_reference: reference,
+      external_reference: reference.replace(/[^a-zA-Z0-9]/g, '').substring(0, 20), // Clean reference
       callback_url: process.env.CALLBACK_URL,
-      customer_name: user_id ? `User ${user_id}` : "Customer",  // Add missing field
-      occasion: "Payment"  // Add missing field
+      customer_name: user_id ? `User${user_id}` : "Customer",
+      occasion: "Wallet Deposit"
     };
     
     logProcess('SWIFTWALLET_REQUEST', { 

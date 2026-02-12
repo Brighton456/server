@@ -159,7 +159,7 @@ const createApp = () => {
     // Create PayHero-compatible callback structure
     const payHeroCallback = {
       response: {
-        Status: swiftCallback?.success === true && (swiftCallback?.status === 'completed' || swiftCallback?.status === 'COMPLETED') ? 'Success' : 'Failed',
+        Status: swiftCallback?.success === true && (swiftCallback?.status?.toLowerCase() === 'completed' || swiftCallback?.status?.toLowerCase() === 'completed') ? 'Success' : 'Failed',
         Amount: swiftCallback?.result?.Amount || swiftCallback?.amount || 5,
         Phone: swiftCallback?.result?.Phone || '',
         ExternalReference: swiftCallback?.external_reference,
@@ -779,21 +779,7 @@ const createApp = () => {
       memory_size: transactionStatuses.size
     }, 'DEBUG');
 
-    if (statusInfo) {
-      logProcess('STATUS_MEMORY_FOUND', {
-        external_ref: externalRef,
-        status: statusInfo.status,
-        verified: statusInfo.status === 'SUCCESS' || statusInfo.status === 'COMPLETED'
-      }, 'SUCCESS');
-      
-      return res.json({ 
-        status: 'Success', 
-        payment_status: statusInfo,
-        verified: statusInfo.status === 'SUCCESS' || statusInfo.status === 'COMPLETED',
-        timestamp: new Date().toISOString()
-      });
-    }
-
+    // Check database FIRST for latest callback data
     try {
       logProcess('STATUS_DB_LOOKUP_START', {
         external_ref: externalRef
@@ -858,36 +844,45 @@ const createApp = () => {
         console.log('📋 Final response being sent to frontend:', JSON.stringify(finalResponse, null, 2));
         console.log('📋 normalizedStatus:', normalizedStatus);
         console.log('📋 payment_status.status:', payload.status);
-        console.log('📋 Frontend will see:', result.data?.payment_status?.status?.toLowerCase());
+        console.log('📋 Frontend will see:', finalResponse.payment_status?.status?.toLowerCase());
         console.log('🔍 === END DEBUG ===');
 
         return res.json(finalResponse);
       }
-
-      logProcess('STATUS_NO_DATA', {
-        external_ref: externalRef
-      }, 'WARN');
-
-      return res.status(202).json({
-        status: 'Pending',
-        message: 'Payment status not yet available',
-        verified: false,
-        timestamp: new Date().toISOString()
-      });
     } catch (error) {
       logProcess('STATUS_EXCEPTION', {
         external_ref: externalRef,
         error: error.message,
         stack: error.stack
       }, 'ERROR');
+    }
+
+    // If no database data, fall back to memory
+    if (statusInfo) {
+      logProcess('STATUS_MEMORY_FOUND', {
+        external_ref: externalRef,
+        status: statusInfo.status,
+        verified: statusInfo.status === 'SUCCESS' || statusInfo.status === 'COMPLETED'
+      }, 'SUCCESS');
       
-      console.error('Status lookup error:', error.message);
-      return res.status(500).json({
-        status: 'Failure',
-        message: 'Unable to retrieve payment status',
+      return res.json({ 
+        status: 'Success', 
+        payment_status: statusInfo,
+        verified: statusInfo.status === 'SUCCESS' || statusInfo.status === 'COMPLETED',
         timestamp: new Date().toISOString()
       });
     }
+
+    logProcess('STATUS_NO_DATA', {
+      external_ref: externalRef
+    }, 'WARN');
+
+    return res.status(202).json({
+      status: 'Pending',
+      message: 'Payment status not yet available',
+      verified: false,
+      timestamp: new Date().toISOString()
+    });
   });
 
   // EXACT same as PayHero

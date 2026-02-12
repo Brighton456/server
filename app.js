@@ -186,7 +186,7 @@ const createApp = () => {
     
     logProcess('PAYMENT_PARSE', { phone, amount, reference, user_id }, 'DEBUG');
     
-    console.log(' Payment initiation request:', { phone, amount, reference });
+    console.log('🚀 Payment initiation request:', { phone, amount, reference });
     console.log('🕐 Initiation timestamp:', new Date().toISOString());
 
     amount = Number(amount);
@@ -217,29 +217,6 @@ const createApp = () => {
     
     console.log('📤 SwiftWallet payload:', JSON.stringify(payload, null, 2));
     console.log('🔗 Callback URL:', process.env.CALLBACK_URL);
-
-    // Store payment request in memory for callback matching
-    const paymentRequest = {
-      phone,
-      amount,
-      reference,
-      user_id,
-      uniqueRef,
-      timestamp: new Date().toISOString(),
-      resolved: false,
-      response: null,
-      res: res // Store response object to use later
-    };
-    
-    transactionStatuses.set(uniqueRef, paymentRequest);
-    logProcess('PAYMENT_REQUEST_STORED', { 
-      uniqueRef, 
-      phone, 
-      amount,
-      total_requests: transactionStatuses.size 
-    }, 'INFO');
-    
-    console.log('💾 Payment request stored, waiting for callback...');
 
     try {
       logProcess('API_CALL_START', { endpoint: SWIFTWALLET_API }, 'INFO');
@@ -299,35 +276,62 @@ const createApp = () => {
         response_time: response.headers['x-response-time']
       }, 'SUCCESS');
       
-      console.log('✅ SwiftWallet STK Push initiated:', JSON.stringify(swiftData, null, 2));
+      console.log('✅ SwiftWallet response:', JSON.stringify(swiftData, null, 2));
 
-      // Update payment request with SwiftWallet response
-      paymentRequest.swiftResponse = swiftData;
-      transactionStatuses.set(uniqueRef, paymentRequest);
+      // Transform SwiftWallet response to PayHero format
+      const payHeroData = transformSwiftWalletToPayHero(swiftData);
+      logProcess('RESPONSE_TRANSFORM', { 
+        swift_response: swiftData,
+        payhero_response: payHeroData 
+      }, 'DEBUG');
       
-      console.log('⏳ Waiting for payment callback (timeout: 2 minutes)...');
+      console.log('🔄 Transformed to PayHero format:', JSON.stringify(payHeroData, null, 2));
+
+      const statusKey = payHeroData?.external_reference || reference;
+      logProcess('MEMORY_KEY', { 
+        original_reference: reference,
+        status_key: statusKey,
+        payhero_external_ref: payHeroData?.external_reference 
+      }, 'DEBUG');
       
-      // Set timeout for payment completion (2 minutes)
-      const timeout = setTimeout(() => {
-        const request = transactionStatuses.get(uniqueRef);
-        if (request && !request.resolved) {
-          logProcess('PAYMENT_TIMEOUT', { uniqueRef }, 'WARN');
-          console.log('⏰ Payment timeout for:', uniqueRef);
-          
-          request.resolved = true;
-          transactionStatuses.delete(uniqueRef);
-          
-          request.res.json({
-            status: 'TIMEOUT',
-            message: 'Payment timed out. Please check your phone and try again.',
-            external_reference: uniqueRef
-          });
-        }
-      }, 120000); // 2 minutes
+      console.log('🔑 Using statusKey for memory storage:', statusKey);
+      console.log('🔑 Original reference from request:', reference);
+      console.log('🔑 PayHero external_reference:', payHeroData?.external_reference);
 
-      // Don't respond now - wait for callback
-      return;
+      if (statusKey) {
+        const memoryData = {
+          status: (payHeroData.status || 'QUEUED').toUpperCase(),
+          details: payHeroData.message || 'STK Push initiated, waiting for user confirmation.',
+          checkoutRequestID: payHeroData.CheckoutRequestID || null,
+          lastUpdated: new Date().toISOString(),
+          user_id: user_id,  // Store user_id for callback use
+          verified: false  // Initially not verified
+        };
+        
+        transactionStatuses.set(statusKey, memoryData);
+        
+        logProcess('MEMORY_STORE', { 
+          key: statusKey, 
+          data: memoryData,
+          total_memory_size: transactionStatuses.size 
+        }, 'SUCCESS');
+        
+        console.log('💾 Stored in memory with key:', statusKey, 'for user:', user_id);
+        console.log('📋 Memory contents:', Array.from(transactionStatuses.entries()));
+      }
 
+      // Return PayHero-compatible response (immediate but not success)
+      const finalResponse = {
+        status: payHeroData.status || 'QUEUED',
+        message: payHeroData.message || 'STK Push sent successfully. Please check your phone.',
+        checkoutRequestID: payHeroData.CheckoutRequestID || null,
+        external_reference: statusKey,
+        raw: swiftData  // Keep raw for debugging
+      };
+      
+      logProcess('FINAL_RESPONSE', { response: finalResponse }, 'INFO');
+      res.json(finalResponse);
+      
     } catch (error) {
       logProcess('PAYMENT_ERROR', { 
         error: error.message,
@@ -338,9 +342,6 @@ const createApp = () => {
       
       console.error('❌ Payment initiation error:', error.response?.data || error.message);
       console.error('❌ Error stack:', error.stack);
-      
-      // Clean up memory on error
-      transactionStatuses.delete(uniqueRef);
       
       // Graceful fallback when SwiftWallet is down
       if (error.response?.status === 500 && error.response?.data?.error === 'Failed to create transaction record') {
@@ -423,45 +424,6 @@ const createApp = () => {
       }, 'DEBUG');
       
       console.log('👤 Memory data found:', memoryData);
-
-      // Check if this is a waiting payment request
-      if (memoryData && memoryData.res && !memoryData.resolved) {
-        logProcess('WAITING_PAYMENT_FOUND', { 
-          external_ref: externalRef,
-          status: status,
-          has_response_object: !!memoryData.res
-        }, 'INFO');
-        
-        console.log('🎯 Found waiting payment request, responding to frontend...');
-        
-        // Prepare response based on payment status
-        let responseStatus = 'FAILED';
-        let responseMessage = 'Payment failed';
-        
-        if (status === 'SUCCESS') {
-          responseStatus = 'SUCCESS';
-          responseMessage = 'Payment completed successfully';
-        } else if (status === 'FAILED') {
-          responseStatus = 'FAILED';
-          responseMessage = 'Payment failed';
-        }
-        
-        // Respond to the waiting frontend request
-        memoryData.resolved = true;
-        memoryData.res.json({
-          status: responseStatus,
-          message: responseMessage,
-          external_reference: externalRef,
-          amount: memoryData.amount,
-          phone: memoryData.phone,
-          callback_data: data
-        });
-        
-        // Clean up memory
-        transactionStatuses.delete(externalRef);
-        
-        console.log('✅ Frontend notified of payment result:', responseStatus);
-      }
 
       if (externalRef) {
         // Store callback data first (EXACT same as PayHero)

@@ -186,6 +186,15 @@ const createApp = () => {
     
     logProcess('PAYMENT_PARSE', { phone, amount, reference, user_id }, 'DEBUG');
     
+    // 🔍 DETAILED PAYLOAD ANALYSIS
+    console.log('🔍 === FRONTEND PAYLOAD ANALYSIS ===');
+    console.log('📋 Raw request body:', JSON.stringify(req.body, null, 2));
+    console.log('📋 Parsed variables:', { phone, amount, reference, user_id });
+    console.log('📋 Reference type:', typeof reference);
+    console.log('📋 Reference length:', reference ? reference.length : 'undefined');
+    console.log('📋 Reference characters:', reference ? reference.split('') : 'undefined');
+    console.log('🔍 === END ANALYSIS ===');
+    
     console.log('🚀 Payment initiation request:', { phone, amount, reference });
     console.log('🕐 Initiation timestamp:', new Date().toISOString());
 
@@ -200,7 +209,7 @@ const createApp = () => {
       amount: amount,
       phone_number: fullPhone,
       channel_id: process.env.SWIFTWALLET_CHANNEL_ID,
-      external_reference: reference.replace(/[^a-zA-Z0-9]/g, '').substring(0, 20), // Clean reference
+      external_reference: reference.replace(/[^a-zA-Z0-9]/g, '').substring(0, 12), // Truncate to 12 chars
       callback_url: process.env.CALLBACK_URL,
       customer_name: user_id ? `User${user_id}` : "Customer",
       occasion: "Wallet Deposit"

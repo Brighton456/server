@@ -209,7 +209,7 @@ const createApp = () => {
       amount: amount,
       phone_number: fullPhone,
       channel_id: process.env.SWIFTWALLET_CHANNEL_ID,
-      external_reference: reference.replace(/[^a-zA-Z0-9]/g, '').substring(0, 12), // Truncate to 12 chars
+      external_reference: reference.replace(/[^a-zA-Z0-9]/g, '').substring(0, 8), // Truncate to 8 chars
       callback_url: process.env.CALLBACK_URL,
       customer_name: user_id ? `User${user_id}` : "Customer",
       occasion: "Wallet Deposit"

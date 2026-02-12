@@ -854,6 +854,13 @@ const createApp = () => {
           response: finalResponse
         }, 'INFO');
 
+        console.log('🔍 === STATUS ENDPOINT DEBUG ===');
+        console.log('📋 Final response being sent to frontend:', JSON.stringify(finalResponse, null, 2));
+        console.log('📋 normalizedStatus:', normalizedStatus);
+        console.log('📋 payment_status.status:', payload.status);
+        console.log('📋 Frontend will see:', result.data?.payment_status?.status?.toLowerCase());
+        console.log('🔍 === END DEBUG ===');
+
         return res.json(finalResponse);
       }
 

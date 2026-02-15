@@ -322,7 +322,7 @@ const createApp = () => {
 
       // Return PayHero-compatible response (immediate but not success)
       const finalResponse = {
-        status: payHeroData.status || 'QUEUED',
+        status: 'SUCCESS',  // Try SUCCESS instead of QUEUED
         message: payHeroData.message || 'STK Push sent successfully. Please check your phone.',
         checkoutRequestID: payHeroData.CheckoutRequestID || null,
         external_reference: statusKey,

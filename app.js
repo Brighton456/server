@@ -320,17 +320,116 @@ const createApp = () => {
         console.log('📋 Memory contents:', Array.from(transactionStatuses.entries()));
       }
 
-      // Return PayHero-compatible response (immediate but not success)
-      const finalResponse = {
-        success: true,  // Try "success" field instead of "status"
-        message: payHeroData.message || 'STK Push sent successfully. Please check your phone.',
-        checkoutRequestID: payHeroData.CheckoutRequestID || null,
-        external_reference: statusKey,
-        raw: swiftData  // Keep raw for debugging
-      };
+      // Store payment request in memory for callback matching
+    const paymentRequest = {
+      phone,
+      amount,
+      reference,
+      user_id,
+      uniqueRef,
+      timestamp: new Date().toISOString(),
+      resolved: false,
+      response: null,
+      res: res // Store response object to use later
+    };
+    
+    transactionStatuses.set(uniqueRef, paymentRequest);
+    logProcess('PAYMENT_REQUEST_STORED', { 
+      uniqueRef, 
+      phone, 
+      amount,
+      total_requests: transactionStatuses.size 
+    }, 'INFO');
+    
+    console.log('💾 Payment request stored, waiting for callback...');
+
+    try {
+      logProcess('API_CALL_START', { endpoint: SWIFTWALLET_API }, 'INFO');
       
-      logProcess('FINAL_RESPONSE', { response: finalResponse }, 'INFO');
-      res.json(finalResponse);
+      // Add retry logic for SwiftWallet API
+      let lastError;
+      let response;
+      
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+          logProcess('API_ATTEMPT', { attempt, max_attempts: 3 }, 'INFO');
+          
+          response = await axios.post(SWIFTWALLET_API, payload, {
+            headers: {
+              Authorization: `Bearer ${process.env.SWIFTWALLET_API_KEY}`,
+              'Content-Type': 'application/json'
+            },
+            timeout: 30000
+          });
+
+          logProcess('API_SUCCESS', {
+            attempt: attempt,
+            status: response.status,
+            data: response.data
+          }, 'SUCCESS');
+          
+          // Success! Break out of retry loop
+          break;
+          
+        } catch (error) {
+          lastError = error;
+          logProcess('API_ERROR', {
+            attempt: attempt,
+            error: error.message,
+            response_data: error.response?.data,
+            status_code: error.response?.status,
+            stack: error.stack
+          }, 'ERROR');
+          
+          console.error('❌ Payment initiation error:', error.response?.data || error.message);
+          console.error('❌ Error stack:', error.stack);
+          
+          if (attempt < 3) {
+            console.log('🔄 Retrying SwiftWallet API call...');
+            // Wait 2 seconds before retry
+            await new Promise(resolve => setTimeout(resolve, 2000));
+          } else {
+            throw error;
+          }
+        }
+      }
+
+      const swiftData = response.data;
+      logProcess('SWIFTWALLET_RESPONSE', { 
+        response: swiftData,
+        status_code: response.status,
+        response_time: response.headers['x-response-time']
+      }, 'SUCCESS');
+      
+      console.log('✅ SwiftWallet STK Push initiated:', JSON.stringify(swiftData, null, 2));
+
+      // Update payment request with SwiftWallet response
+      paymentRequest.swiftResponse = swiftData;
+      transactionStatuses.set(uniqueRef, paymentRequest);
+      
+      console.log('⏳ Waiting for payment callback (timeout: 2 minutes)...');
+      
+      // Set timeout for payment completion (2 minutes)
+      const timeout = setTimeout(() => {
+        const request = transactionStatuses.get(uniqueRef);
+        if (request && !request.resolved) {
+          logProcess('PAYMENT_TIMEOUT', { uniqueRef }, 'WARN');
+          console.log('⏰ Payment timeout for:', uniqueRef);
+          
+          request.resolved = true;
+          transactionStatuses.delete(uniqueRef);
+          
+          request.res.json({
+            success: false,
+            status: 'TIMEOUT',
+            message: 'Payment timed out. Please check your phone and try again.',
+            external_reference: uniqueRef
+          });
+        }
+      }, 120000); // 2 minutes
+
+      // Don't respond now - wait for callback
+      return;
       
     } catch (error) {
       logProcess('PAYMENT_ERROR', { 
@@ -425,7 +524,48 @@ const createApp = () => {
       
       console.log('👤 Memory data found:', memoryData);
 
-      if (externalRef) {
+      // Check if this is a waiting payment request
+      if (memoryData && memoryData.res && !memoryData.resolved) {
+        logProcess('WAITING_PAYMENT_FOUND', { 
+          external_ref: externalRef,
+          status: status,
+          has_response_object: !!memoryData.res
+        }, 'INFO');
+        
+        console.log('🎯 Found waiting payment request, responding to frontend...');
+        
+        // Prepare response based on payment status
+        let responseSuccess = false;
+        let responseStatus = 'FAILED';
+        let responseMessage = 'Payment failed';
+        
+        if (status === 'SUCCESS' || status === 'COMPLETED') {
+          responseSuccess = true;
+          responseStatus = 'SUCCESS';
+          responseMessage = 'Payment completed successfully';
+        } else if (status === 'FAILED') {
+          responseSuccess = false;
+          responseStatus = 'FAILED';
+          responseMessage = 'Payment failed';
+        }
+        
+        // Respond to the waiting frontend request
+        memoryData.resolved = true;
+        memoryData.res.json({
+          success: responseSuccess,
+          status: responseStatus,
+          message: responseMessage,
+          external_reference: externalRef,
+          amount: memoryData.amount,
+          phone: memoryData.phone,
+          callback_data: data
+        });
+        
+        // Clean up memory
+        transactionStatuses.delete(externalRef);
+        
+        console.log('✅ Frontend notified of payment result:', responseStatus);
+      }
         // Store callback data first (EXACT same as PayHero)
         try {
           logProcess('DB_CALLBACK_INSERT_START', {

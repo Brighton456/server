@@ -554,11 +554,15 @@ app.get('/health', (req, res) => {
   });
 });
 
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`🚀 Dual gateway server running on port ${PORT}`);
-  console.log(`🏦 PayHero: references starting with 'payp'`);
-  console.log(`⚡ SwiftWallet: all other references`);
+// Internal ping for self-message scheduler
+app.post('/internal/ping', (req, res) => {
+  console.log("✅ Self-message received:", req.body);
+  res.send("OK");
 });
 
-module.exports = app;
+// Create app function for deployment
+function createApp() {
+  return app;
+}
+
+module.exports = { createApp };

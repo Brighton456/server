@@ -12,7 +12,10 @@ const corsOptions = {
   origin: [
     process.env.FRONTED_URL || 'http://localhost:3000',
     process.env.FRONTED_URL2 || 'http://localhost:3001',
+    'https://pro-aviator-predictor-analytics.windsurf.build',
+    'https://gig-smart.netlify.app',
     'http://localhost:3000',
+    'http://localhost:5173',
     'http://localhost:8081'
   ],
   credentials: true

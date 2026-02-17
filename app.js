@@ -6,7 +6,19 @@ require('dotenv').config();
 
 // Initialize Express app
 const app = express();
-app.use(cors());
+
+// Configure CORS for multiple frontends
+const corsOptions = {
+  origin: [
+    process.env.FRONTED_URL || 'http://localhost:3000',
+    process.env.FRONTED_URL2 || 'http://localhost:3001',
+    'http://localhost:3000',
+    'http://localhost:8081'
+  ],
+  credentials: true
+};
+
+app.use(cors(corsOptions));
 app.use(express.json());
 
 // Initialize Supabase
@@ -454,20 +466,25 @@ app.post('/api/callback', async (req, res) => {
 
     // Store callback data in database
     try {
-      const { error: insertError } = await supabase
-        .from('payment_callbacks')
-        .insert([
-          {
-            external_reference: externalRef,
-            callback_data: data,
-            status
-          }
-        ]);
+      // Only insert if we have a valid external_reference
+      if (externalRef) {
+        const { error: insertError } = await supabase
+          .from('payment_callbacks')
+          .insert([
+            {
+              external_reference: externalRef,
+              callback_data: data,
+              status
+            }
+          ]);
 
-      if (insertError) {
-        console.error('❌ Failed to store callback:', insertError);
+        if (insertError) {
+          console.error('❌ Failed to store callback:', insertError);
+        } else {
+          console.log('💾 Callback stored in database');
+        }
       } else {
-        console.log('💾 Callback stored in database');
+        console.log('⚠️ Skipping database insert - no external_reference found');
       }
     } catch (dbError) {
       console.error('❌ Database error:', dbError);

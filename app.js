@@ -34,7 +34,7 @@ const supabase = createClient(
 const transactionStatuses = new Map();
 
 // SwiftWallet API
-const SWIFTWALLET_API = 'https://api.swiftwallet.co.ke/v1/stk/push';
+const SWIFTWALLET_API = 'https://swiftwallet.co.ke/v3/stk/push';
 
 // PayHero API
 const PAYHERO_API = 'https://backend.payhero.co.ke/api/v2/payments';
